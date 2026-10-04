@@ -7,6 +7,31 @@ import VisualEditor from "./visual-editor";
 
 type Tab = "visual" | "html" | "css" | "data";
 type IconName = "grid" | "layers" | "code" | "eye" | "copy" | "download" | "printer" | "chevron" | "check" | "file" | "spark" | "refresh" | "menu" | "close";
+type Workspace = { id: string; name: string; html: string; css: string; data: string; templateId: string; updatedAt: number };
+const storageKey = "papercraft-workspaces-v1";
+const initialWorkspace: Workspace = { id: "initial", name: templates[0].name, html: templates[0].html, css: templates[0].css, data: templates[0].data, templateId: templates[0].id, updatedAt: 0 };
+
+function readSavedWorkspaces(): { activeId: string; items: Workspace[] } | null {
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object") return null;
+    const saved = value as { activeId?: unknown; items?: unknown };
+    if (typeof saved.activeId !== "string" || !Array.isArray(saved.items)) return null;
+    const items = saved.items.filter((item): item is Workspace => item && typeof item === "object" && typeof item.id === "string" && typeof item.name === "string" && typeof item.html === "string" && typeof item.css === "string" && typeof item.data === "string" && typeof item.templateId === "string" && typeof item.updatedAt === "number");
+    return items.some((item) => item.id === saved.activeId) ? { activeId: saved.activeId, items } : null;
+  } catch { return null; }
+}
+
+function makeWorkspace(templateId: string): Workspace {
+  const template = templates.find((item) => item.id === templateId) ?? templates[0];
+  return { id: crypto.randomUUID(), name: template.name, html: template.html, css: template.css, data: template.data, templateId: template.id, updatedAt: Date.now() };
+}
+
+function writeWorkspaces(items: Workspace[], activeId: string) {
+  try { window.localStorage.setItem(storageKey, JSON.stringify({ activeId, items })); } catch { /* Penyimpanan mungkin dibatasi browser. */ }
+}
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -30,6 +55,9 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 
 export default function Home() {
   const [selected, setSelected] = useState(templates[0].id);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([initialWorkspace]);
+  const [activeId, setActiveId] = useState(initialWorkspace.id);
+  const [hydrated, setHydrated] = useState(false);
   const [html, setHtml] = useState(templates[0].html);
   const [css, setCss] = useState(templates[0].css);
   const [data, setData] = useState(templates[0].data);
@@ -57,11 +85,80 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  function chooseTemplate(id: string) {
-    const next = templates.find((item) => item.id === id);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const saved = readSavedWorkspaces();
+      if (saved) {
+        const active = saved.items.find((item) => item.id === saved.activeId)!;
+        setWorkspaces(saved.items);
+        setActiveId(active.id);
+        setSelected(active.templateId);
+        setHtml(active.html);
+        setCss(active.css);
+        setData(active.data);
+        setDocumentName(active.name);
+      }
+      setHydrated(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const timer = window.setTimeout(() => {
+      const items = workspaces.map((item) => item.id === activeId ? { ...item, name: documentName, html, css, data, templateId: selected, updatedAt: Date.now() } : item);
+      writeWorkspaces(items, activeId);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, workspaces, activeId, documentName, html, css, data, selected]);
+
+  function snapshot(): Workspace[] {
+    return workspaces.map((item) => item.id === activeId ? { ...item, name: documentName, html, css, data, templateId: selected, updatedAt: Date.now() } : item);
+  }
+
+  function openWorkspace(id: string) {
+    if (id === activeId) return;
+    const items = snapshot();
+    const next = items.find((item) => item.id === id);
     if (!next) return;
-    setSelected(id); setHtml(next.html); setCss(next.css); setData(next.data); setDocumentName(next.name); setTab("visual"); setMobileMenu(false);
-    setToast(`Template ${next.name} dimuat`);
+    writeWorkspaces(items, id);
+    setWorkspaces(items);
+    setActiveId(id);
+    setSelected(next.templateId);
+    setHtml(next.html); setCss(next.css); setData(next.data); setDocumentName(next.name);
+    setTab("visual"); setMobileMenu(false);
+  }
+
+  function createWorkspace(templateId = templates[0].id) {
+    const next = makeWorkspace(templateId);
+    const items = [next, ...snapshot()];
+    writeWorkspaces(items, next.id);
+    setWorkspaces(items);
+    setActiveId(next.id);
+    setSelected(next.templateId);
+    setHtml(next.html); setCss(next.css); setData(next.data); setDocumentName(next.name);
+    setTab("visual"); setMobileMenu(false);
+    setToast("Workspace baru dibuat");
+  }
+
+  function deleteWorkspace(id: string) {
+    const target = workspaces.find((item) => item.id === id);
+    if (!target || !window.confirm(`Hapus workspace “${target.name}”?`)) return;
+    const remaining = snapshot().filter((item) => item.id !== id);
+    const items = remaining.length ? remaining : [makeWorkspace(templates[0].id)];
+    writeWorkspaces(items, id === activeId ? items[0].id : activeId);
+    setWorkspaces(items);
+    if (id === activeId) {
+      const next = items[0];
+      setActiveId(next.id); setSelected(next.templateId);
+      setHtml(next.html); setCss(next.css); setData(next.data); setDocumentName(next.name);
+      setTab("visual");
+    }
+    setToast("Workspace dihapus");
+  }
+
+  function chooseTemplate(id: string) {
+    createWorkspace(id);
   }
 
   async function copyOutput() {
@@ -98,15 +195,15 @@ export default function Home() {
     {mobileMenu && <div className="mobile-overlay" onClick={() => setMobileMenu(false)} />}
     <aside className={`sidebar ${mobileMenu ? "is-open" : ""}`}>
       <div className="brand-row"><div className="app-logo"><Icon name="layers" size={21} /></div><div className="app-brand">paper<span>craft</span><small>PDF BUILDER</small></div><button className="icon-button mobile-close" onClick={() => setMobileMenu(false)} aria-label="Tutup menu"><Icon name="close" /></button></div>
-      <div className="sidebar-section"><div className="section-heading">WORKSPACE</div><button className="nav-item active"><Icon name="grid" size={17} /> Template Builder</button><div className="section-heading template-heading">TEMPLATE DOKUMEN <span>{templates.length}</span></div><div className="template-list">{templates.map((item) => <button key={item.id} className={`template-item ${selected === item.id ? "selected" : ""}`} onClick={() => chooseTemplate(item.id)}><span className="template-icon"><Icon name="file" size={17} /></span><span className="template-copy"><strong>{item.name}</strong><small>{item.category}</small></span>{selected === item.id && <span className="selected-dot" />}</button>)}</div></div>
+      <div className="sidebar-section"><div className="section-heading">WORKSPACE</div><button className="nav-item active"><Icon name="grid" size={17} /> Template Builder</button><div className="workspace-list-heading"><span>DOKUMEN SAYA <small>{workspaces.length}</small></span><button type="button" onClick={() => createWorkspace()} aria-label="Buat workspace baru" title="Buat workspace baru">+</button></div><div className="workspace-list">{workspaces.map((item) => <div key={item.id} className={`workspace-row ${activeId === item.id ? "selected" : ""}`}><button type="button" className="workspace-open" onClick={() => openWorkspace(item.id)}><span className="workspace-file"><Icon name="file" size={15} /></span><span><strong>{activeId === item.id ? documentName.trim() || "Tanpa nama" : item.name.trim() || "Tanpa nama"}</strong><small>{item.templateId === "blank" ? "Dokumen kosong" : templates.find((template) => template.id === item.templateId)?.name ?? "Dokumen"}</small></span></button><button type="button" className="workspace-delete" onClick={() => deleteWorkspace(item.id)} aria-label={`Hapus workspace ${item.name}`} title="Hapus workspace">×</button></div>)}</div><div className="section-heading template-heading">MULAI DARI TEMPLATE <span>{templates.length}</span></div><div className="template-list">{templates.map((item) => <button key={item.id} className="template-item" onClick={() => chooseTemplate(item.id)}><span className="template-icon"><Icon name="file" size={17} /></span><span className="template-copy"><strong>{item.name}</strong><small>{item.category}</small></span></button>)}</div></div>
       <div className="sidebar-bottom"><div className="tip-icon"><Icon name="spark" size={17} /></div><strong>Siap untuk Thymeleaf</strong><p>Ekspor HTML dengan atribut <code>th:*</code> dan CSS di dalam tag <code>&lt;style&gt;</code>.</p><span className="tip-link">Template siap pakai <Icon name="chevron" size={14} /></span></div>
     </aside>
 
-    <div className="main-area"><header className="topbar"><div className="breadcrumbs"><button className="icon-button menu-button" onClick={() => setMobileMenu(true)} aria-label="Buka menu"><Icon name="menu" /></button><span>Workspace</span><Icon name="chevron" size={14} /><strong>Template Builder</strong></div><div className="top-actions"><span className="saved-pill"><span /> Tersimpan di sesi ini</span><button className="button button-outline header-download" onClick={downloadHtml}><Icon name="download" size={16} /> Unduh HTML</button><button className="button button-primary" onClick={printPdf}><Icon name="printer" size={16} /> Preview PDF</button></div></header>
+    <div className="main-area"><header className="topbar"><div className="breadcrumbs"><button className="icon-button menu-button" onClick={() => setMobileMenu(true)} aria-label="Buka menu"><Icon name="menu" /></button><span>Workspace</span><Icon name="chevron" size={14} /><strong>{documentName.trim() || "Tanpa nama"}</strong></div><div className="top-actions"><span className="saved-pill"><span /> Tersimpan di browser</span><button className="button button-outline header-download" onClick={downloadHtml}><Icon name="download" size={16} /> Unduh HTML</button><button className="button button-primary" onClick={printPdf}><Icon name="printer" size={16} /> Preview PDF</button></div></header>
 
     <main className="workspace"><div className="workspace-heading"><div><div className="heading-kicker"><span className="kicker-dot" /> DOCUMENT STUDIO <span className="kicker-line" /> TEMPLATE EDITOR</div><div className="title-row"><h1>PDF Template Builder</h1><span className="beta-pill">BETA</span></div><p>Buat dokumen dinamis yang tampil rapi di browser, PDF, dan Thymeleaf.</p></div><div className="heading-actions"><button className="button button-subtle" onClick={copyOutput}><Icon name="copy" size={16} /> Salin HTML</button><button className="button button-dark" onClick={downloadHtml}><Icon name="download" size={16} /> Ekspor Template</button></div></div>
 
-    <div className="editor-grid"><section className="panel editor-panel"><div className="panel-top"><div><div className="panel-eyebrow">01 / KONFIGURASI</div><h2>Editor Template</h2><p>Susun blok atau sesuaikan kode dokumen Anda.</p></div><span className="panel-icon"><Icon name="layers" size={19} /></span></div><div className="document-field"><label htmlFor="documentName">NAMA DOKUMEN</label><input id="documentName" value={documentName} onChange={(event) => setDocumentName(event.target.value)} placeholder="Nama dokumen" /></div><div className="tabs" role="tablist" aria-label="Bagian editor"><button role="tab" aria-selected={tab === "visual"} className={tab === "visual" ? "active" : ""} onClick={() => setTab("visual")}><Icon name="layers" size={15} /> Visual</button><button role="tab" aria-selected={tab === "html"} className={tab === "html" ? "active" : ""} onClick={() => setTab("html")}><Icon name="code" size={15} /> HTML</button><button role="tab" aria-selected={tab === "css"} className={tab === "css" ? "active" : ""} onClick={() => setTab("css")}><span className="css-icon">#</span> CSS</button><button role="tab" aria-selected={tab === "data"} className={tab === "data" ? "active" : ""} onClick={() => setTab("data")}><span className="data-icon">{`{}`}</span> Data Contoh</button></div>{tab === "visual" ? <VisualEditor key={selected} html={html} css={css} onHtmlChange={setHtml} onCssChange={setCss} /> : <><div className="editor-toolbar"><span><span className="file-dot" />{tab === "html" ? "template.html" : tab === "css" ? "styles.css" : "sample-data.json"}</span><span>{lineCount} baris</span></div><div className="code-editor"><div className="line-numbers" aria-hidden="true">{Array.from({ length: Math.max(lineCount, 25) }, (_, index) => <div key={index}>{index + 1}</div>)}</div><textarea spellCheck={false} aria-label={tab === "html" ? "Kode HTML" : tab === "css" ? "Kode CSS" : "Data JSON contoh"} value={current} onChange={(event) => setCurrent(event.target.value)} /></div><div className="editor-foot"><span className={tab === "data" && parsed.error ? "error-text" : ""}>{tab === "data" && parsed.error ? `JSON tidak valid: ${parsed.error}` : tab === "html" ? "Atribut th:* tetap utuh saat diekspor" : tab === "css" ? "CSS akan disisipkan ke tag <style>" : "Data ini hanya untuk pratinjau"}</span><span className="language-tag">{tab.toUpperCase()}</span></div></>}</section>
+    <div className="editor-grid"><section className="panel editor-panel"><div className="panel-top"><div><div className="panel-eyebrow">01 / KONFIGURASI</div><h2>Editor Template</h2><p>Susun blok atau sesuaikan kode dokumen Anda.</p></div><span className="panel-icon"><Icon name="layers" size={19} /></span></div><div className="document-field"><label htmlFor="documentName">NAMA DOKUMEN</label><input id="documentName" value={documentName} onChange={(event) => setDocumentName(event.target.value)} placeholder="Nama dokumen" /></div><div className="tabs" role="tablist" aria-label="Bagian editor"><button role="tab" aria-selected={tab === "visual"} className={tab === "visual" ? "active" : ""} onClick={() => setTab("visual")}><Icon name="layers" size={15} /> Visual</button><button role="tab" aria-selected={tab === "html"} className={tab === "html" ? "active" : ""} onClick={() => setTab("html")}><Icon name="code" size={15} /> HTML</button><button role="tab" aria-selected={tab === "css"} className={tab === "css" ? "active" : ""} onClick={() => setTab("css")}><span className="css-icon">#</span> CSS</button><button role="tab" aria-selected={tab === "data"} className={tab === "data" ? "active" : ""} onClick={() => setTab("data")}><span className="data-icon">{`{}`}</span> Data Contoh</button></div>{tab === "visual" ? <VisualEditor key={activeId} html={html} css={css} onHtmlChange={setHtml} onCssChange={setCss} /> : <><div className="editor-toolbar"><span><span className="file-dot" />{tab === "html" ? "template.html" : tab === "css" ? "styles.css" : "sample-data.json"}</span><span>{lineCount} baris</span></div><div className="code-editor"><div className="line-numbers" aria-hidden="true">{Array.from({ length: Math.max(lineCount, 25) }, (_, index) => <div key={index}>{index + 1}</div>)}</div><textarea spellCheck={false} aria-label={tab === "html" ? "Kode HTML" : tab === "css" ? "Kode CSS" : "Data JSON contoh"} value={current} onChange={(event) => setCurrent(event.target.value)} /></div><div className="editor-foot"><span className={tab === "data" && parsed.error ? "error-text" : ""}>{tab === "data" && parsed.error ? `JSON tidak valid: ${parsed.error}` : tab === "html" ? "Atribut th:* tetap utuh saat diekspor" : tab === "css" ? "CSS akan disisipkan ke tag <style>" : "Data ini hanya untuk pratinjau"}</span><span className="language-tag">{tab.toUpperCase()}</span></div></>}</section>
 
     <section className="panel preview-panel"><div className="panel-top preview-top"><div><div className="panel-eyebrow">02 / HASIL AKHIR</div><h2>Live Preview</h2><p>Pratinjau dokumen dalam ukuran kertas A4.</p></div><span className="live-pill"><span /> LIVE</span></div><div className="preview-toolbar"><div className="preview-label"><Icon name="eye" size={17} /><span>Pratinjau dokumen</span><span className="a4-pill">A4</span></div><div className="zoom-controls"><button onClick={() => setScale((value) => Math.max(50, value - 10))} aria-label="Perkecil">−</button><span>{scale}%</span><button onClick={() => setScale((value) => Math.min(120, value + 10))} aria-label="Perbesar">+</button></div></div><div className="preview-stage"><div className="paper-holder" style={{ width: `${794 * scale / 100}px`, minHeight: `${1123 * scale / 100}px` }}><iframe title="Pratinjau template" sandbox="allow-same-origin" srcDoc={preview} style={{ width: "794px", height: "1123px", transform: `scale(${scale / 100})` }} /></div></div><div className="preview-foot"><span><span className="green-dot" /> Pratinjau diperbarui otomatis</span><button onClick={printPdf}>Buka preview PDF <Icon name="chevron" size={15} /></button></div></section></div>
 
