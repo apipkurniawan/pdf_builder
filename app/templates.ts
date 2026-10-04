@@ -1,3 +1,5 @@
+import { visualBlockCss } from "./visual-builder";
+
 export type Template = {
   id: string;
   name: string;
@@ -17,6 +19,15 @@ body { margin: 0; color: #243047; font-family: Arial, Helvetica, sans-serif; bac
 @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } .page { width: auto; min-height: 0; margin: 0; } }`;
 
 export const templates: Template[] = [
+  {
+    id: "blank",
+    name: "Dokumen Kosong",
+    category: "Mulai dari awal",
+    description: "Susun halaman A4 dari blok visual.",
+    html: `<div class="page"><h1 class="builder-heading" data-builder-kind="heading" data-builder-field="text">Judul dokumen</h1><p class="builder-paragraph" data-builder-kind="paragraph" data-builder-field="text">Mulai tulis dokumen Anda di sini.</p></div>`,
+    css: `${baseCss}\n${visualBlockCss}`,
+    data: "{}",
+  },
   {
     id: "invoice",
     name: "Invoice Modern",
